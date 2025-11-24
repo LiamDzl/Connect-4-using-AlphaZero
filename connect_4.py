@@ -12,10 +12,11 @@ def mask(state):
     return result
 
 class Grid():
-    def __init__(self, state): # state a 6 x 7 tensor
+    def __init__(self, state, player): # State a 6 x 7 tensor, player either +/- 1
         self.state = state
+        self.player = player
 
-    def action(self, player, column):
+    def action(self, column):
         if self.state[0, column] != 0:
             return "### Illegal Action ###"
         
@@ -23,7 +24,8 @@ class Grid():
             for i in range(6):
                 check = self.state[5-i, column]
                 if int(check.item()) == 0:
-                    self.state[5-i, column] = player
+                    self.state[5-i, column] = self.player
+                    self.player = self.player * -1 # Change player 
                     break
 
             return "### Legal Action ###"

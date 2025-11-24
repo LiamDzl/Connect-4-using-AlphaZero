@@ -7,8 +7,9 @@ import numpy as np
 from connect_4 import mask
 
 class policy(nn.Module):
-    def __init__(self, structure): 
+    def __init__(self, structure, alpha): 
         super().__init__()
+        self.alpha = alpha
         layers = [] # this object is a python list, but contains actual affine maps 
 
         for i in range(len(structure) - 1):  # n layers need n-1 Linear maps
@@ -26,8 +27,16 @@ class policy(nn.Module):
         for i in self.pspace_dimensions:
             self.total_dimension += i
      
-    def forward(self, state): # mask a list of columns that are full, i.e. top element non-zero - btw mask comes automatically from state
-        x = state.reshape(1,42)
+    def forward(self, node):
+        # Mask a list of columns that are full, i.e. top element non-zero 
+        # - btw mask comes automatically from state
+
+        state = node.state.reshape(1,42)
+        player = torch.tensor([node.player])
+        player = player.reshape(1,1)
+
+        x = torch.cat((state, player), dim=1)
+
         for i in self.layers[:-1]: # ReLU, up til last (since we wanna grab this vector)
             x = F.relu(i(x))
 
@@ -44,4 +53,4 @@ class policy(nn.Module):
                 distribution[i] = reduced_distribution[count]
                 count += 1
         
-        return value, distribution.T
+        return self.alpha * value.detach(), (distribution.T).detach()
