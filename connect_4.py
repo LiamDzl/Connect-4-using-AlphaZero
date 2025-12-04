@@ -1,30 +1,32 @@
 import numpy as np
 import torch
+import copy
+
 
 def mask(state):
-    result = [True, True, True, True, True, True, True, False] # 8th corresponds to value, so to be removed anyway
-    for i in range(7):
-        if state[0, i] != 0:
-            result[i] = False   
+    board = state.reshape(6, 7)
+    valid_moves = (board[0] == 0)
+    full_mask = valid_moves.reshape(7)
 
-    result = torch.tensor(result)
-    result = result.reshape(1,8)
-    return result
+    return full_mask
+
 
 class Grid():
     def __init__(self, state, player): # State a 6 x 7 tensor, player either +/- 1
-        self.state = state
+        self.state = copy.deepcopy(state)
         self.player = player
 
     def action(self, column):
-        if self.state[0, column] != 0:
+        mutable_state = self.state
+
+        if mutable_state[0, column] != 0:
             return "### Illegal Action ###"
         
         else:
             for i in range(6):
-                check = self.state[5-i, column]
+                check = mutable_state[5-i, column]
                 if int(check.item()) == 0:
-                    self.state[5-i, column] = self.player
+                    mutable_state[5-i, column] = self.player
                     self.player = self.player * -1 # Change player 
                     break
 

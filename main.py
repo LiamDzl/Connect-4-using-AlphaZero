@@ -2,12 +2,15 @@ import numpy as np
 from neural_network import policy
 import torch
 from connect_4 import Grid, winner, graphic
-import time
+from tree_module import MCTS
 
-policy_network = policy(structure=[42,100,100,42,8])
+torch.serialization.add_safe_globals([policy])
+policy_network = torch.load("weird_parameters.pt", weights_only=False)
+policy_name = "weird_parameters.pt"
+tree_search = MCTS(model=policy_network, iterations=600)
 
 x = torch.zeros(6,7)
-environment = Grid(state=x)
+environment = Grid(state=x, player=1)
 
 column = ""
 print("\n### Connect 4 ###\n")
@@ -17,6 +20,7 @@ graphic(environment.state)
 print("")
 
 move = 0
+agent_colour = -1
 
 while (column != "end"):
 
@@ -53,7 +57,8 @@ while (column != "end"):
         break
 
     else:
-        environment.action(player=1, column=int(column)-1)
+        environment.action(column=int(column)-1)
+        environment.player = -1
         move += 1
 
         if winner(environment.state) == 1:
@@ -69,17 +74,24 @@ while (column != "end"):
         else:
             graphic(environment.state)
         
-        value, distribution = policy_network.forward(environment.state)
-        distribution = distribution.detach()
-        time.sleep(0.8)
 
-        yellow_sample = torch.multinomial(distribution, num_samples=1)
+        distribution = tree_search.run(state=environment.state, player=-1, display=False)
+        print(f"\n### {policy_name}'s TREE Decision Tensor: {distribution}\n")
 
-        print("\n")
-        environment.action(player=-1, column=int(yellow_sample.item()))
-        print("Value Function: ", value.item())
-        print("Distribution: ", distribution)
-        print("\n")
+        state = torch.cat(((environment.state).reshape(42), torch.tensor([agent_colour])), dim=0)
+
+        output = policy_network(state)
+        neural_distribution = output[:7]
+        value = output[7]
+
+        print(f"### {policy_name}'s NEURAL Decision Tensor: {neural_distribution}\n")
+
+        yellow_move = torch.argmax(distribution)
+        print(f"### {policy_name}'s Value Evaluation: {value}\n")
+
+
+        environment.action(column=int(yellow_move.item()))
+        environment.player = 1
         graphic(environment.state)
         print("\n")
 

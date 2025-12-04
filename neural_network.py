@@ -27,30 +27,51 @@ class policy(nn.Module):
         for i in self.pspace_dimensions:
             self.total_dimension += i
      
-    def forward(self, node):
-        # Mask a list of columns that are full, i.e. top element non-zero 
-        # - btw mask comes automatically from state
-
-        state = node.state.reshape(1,42)
-        player = torch.tensor([node.player])
-        player = player.reshape(1,1)
-
-        x = torch.cat((state, player), dim=1)
+    def forward(self, x): #input_vector
+        state = x[:-1].reshape(6,7)
 
         for i in self.layers[:-1]: # ReLU, up til last (since we wanna grab this vector)
             x = F.relu(i(x))
 
         penultimate_eight = self.layers[-1](x)
-        value = penultimate_eight[:,-1]
+        dist = penultimate_eight[0:7]
+        value = penultimate_eight[-1]
+
+        # Splitting value from distribution + masking
         filter = mask(state)
-        to_softmax = penultimate_eight[filter] #<=7
+        to_softmax = dist[filter] #<=7
 
         reduced_distribution = F.softmax(to_softmax, dim = 0)
-        distribution = torch.zeros(7,1)
-        count = 0
-        for i in range(7):
-            if filter[0, i] == True:
-                distribution[i] = reduced_distribution[count]
-                count += 1
         
-        return self.alpha * value.detach(), (distribution.T).detach()
+        distribution = torch.zeros(7)
+        distribution[filter] = reduced_distribution
+        
+        output_vector = torch.cat([distribution, self.alpha * value.unsqueeze(0)], dim=0)
+        output_vector = output_vector.reshape(8)
+
+        return output_vector
+    
+    def train(self, training_inputs, training_outputs, epochs, nabla):
+            training_size = training_inputs.shape[0]
+            mse = nn.MSELoss()
+            optimiser = optim.SGD(self.parameters(), lr=nabla)
+
+            for epoch in range(epochs):
+                permutation = torch.randperm(training_size)
+                training_inputs = training_inputs[permutation]
+                training_outputs = training_outputs[permutation]
+
+                for x, y in zip(training_inputs, training_outputs):
+                    nn_output = self.forward(x)
+
+                    # Value and policy
+                    value_loss = mse(nn_output[7], y[7])
+                    policy_loss = -torch.dot(y[0:7], torch.log(nn_output[0:7] + 1e-8))
+
+                    loss_scalar = value_loss + policy_loss
+
+                    optimiser.zero_grad()
+                    loss_scalar.backward()
+                    optimiser.step()
+
+            return "Successfully Trained."

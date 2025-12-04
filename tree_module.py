@@ -4,7 +4,8 @@ import math
 import numpy as np
 import copy
 
-exploration_constant = 0.014
+exploration_constant = 0.8
+
 
 def PUCT(parent, child, player):
 
@@ -41,13 +42,23 @@ class Node:
          # expanding only necessary if we actually decide to explore this action
 
          self.state = state
-         nn_value , nn_dist = self.model.forward(self)
+         state = state.reshape(42)
+         player = torch.tensor([self.player])
+         player = player.reshape(1)
+
+         x = torch.cat((state, player), dim=0)
+         x = x.float()
+
+         output_vector = self.model.forward(x)
+         output_vector.detach()
+
+         # Grab relevant infos
+         nn_dist = output_vector[0:7]
+         nn_value = output_vector[7] 
 
          # Now create set of "ghost nodes" for all non-zero probabilities -- 
          # these represent actions only, we've not computed any of these nodes out properly
          
-         nn_dist = nn_dist[0] # Change from 2D to 1D tensor
-
          for index, probability in enumerate(nn_dist):
             if probability != 0:
                 self.children[index] = Node(prior=probability, player=self.player * -1, model=self.model)
