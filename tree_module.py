@@ -4,8 +4,7 @@ import math
 import numpy as np
 import copy
 
-exploration_constant = 0.8
-
+exploration_constant = 1.2
 
 def PUCT(parent, child, player):
 

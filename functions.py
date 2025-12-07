@@ -39,5 +39,3 @@ def generate_57():
             
 
     return output
-
-generate_57()

@@ -11,14 +11,14 @@ games_played = 0
 
 ### Agent 1, Always Moves First ###
 torch.serialization.add_safe_globals([policy])
-agent_1 = torch.load("weird_parameters.pt", weights_only=False)
+agent_1 = torch.load("random_parameters.pt", weights_only=False)
 tree_1 = MCTS(model=agent_1, iterations=600)
-agent_1_name = "weird_parameters.pt"
+agent_1_name = "random_parameters.pt"
 
 ### Agent 2, Always Moves Second ###
-agent_2 = torch.load("random_parameters.pt", weights_only=False)
+agent_2 = torch.load("weird_parameters.pt", weights_only=False)
 tree_2 = MCTS(model=agent_2, iterations=600)
-agent_2_name = "random_parameters.pt"
+agent_2_name = "weird_parameters.pt.pt"
 
 ##### ##### ##### ##### ##### ##### ##### ##### ##### #####
 
