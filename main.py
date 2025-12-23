@@ -1,64 +1,73 @@
 import torch
-from neural_network import policy
-from connect_4 import Grid, winner, graphic
+from neural_network import policy, Constant_Network
+from connect_4 import Grid, winner, graphic, compute_player
 from tree_module import MCTS
+from functions import alphazero_display, softmax_temp
 
 torch.serialization.add_safe_globals([policy])
-policy_network = torch.load("weird_parameters.pt", weights_only=False)
-policy_name = "weird_parameters.pt"
-tree_search = MCTS(model=policy_network, iterations=600)
+policy_network = torch.load("trained_parameters.pt", weights_only=False)
+# policy_network = Constant_Network()
+policy_name = "trained_parameters.pt"
 
-x = torch.zeros(6,7)
-environment = Grid(state=x, player=1)
+initial = torch.zeros(6,7)
+environment = Grid(state=initial)
 
 column = ""
 move = 0
+exploration_constant = 1.85
+search_depth = 250
+noise = 0
 
-print("\n### Connect 4 ###\n")
-print("(Enter \"end\" to exit)\n")
+print("""\n# Connect 4. ("end" to exit) +\n""")
 
 proceed = False
 while not proceed:
-    player_colour = input("🔴 or 🟡 ? : ")
+    player_colour = input("🔴 / 🟡 ? : ")
     print("")
 
     if player_colour == "end":
             column = "end"
             break
     
-    if player_colour == "red":
+    if player_colour in {"red", "Red", "1", "r"}:
         emoji = "🔴"
         player_colour = 1
         agent_colour = -1
         graphic(environment.state)
-        print("\n")
+        print("")
         proceed = True
 
-    elif player_colour == "yellow":
+    elif player_colour in {"yellow", "Yellow", "2", "y"}:
         emoji = "🟡"
         player_colour = -1
         agent_colour = 1
-        graphic(environment.state)
    
-        distribution = tree_search.run(state=environment.state, player=1, display=False)
-        print(f"\n### {policy_name}'s TREE Decision Tensor: {distribution}\n")
+        tree_search = MCTS(model=policy_network, iterations=search_depth)
+        distribution = tree_search.run(state=environment.state, exploration_constant=exploration_constant, display=False)
 
-        state = torch.cat(((environment.state).reshape(42), torch.tensor([1])), dim=0)
-
-        output = policy_network(state)
+        state = environment.state.reshape(42)
+        output = policy_network.forward(state)
         neural_distribution = output[:7]
         value = output[7]
+        root_node = tree_search.explored_nodes[0]
+        root_value = root_node.value_sum / root_node.visit_count
 
-        print(f"### {policy_name}'s NEURAL Decision Tensor: {neural_distribution}\n")
+        choose_from = softmax_temp(distribution, temp=noise)[0]
+        agent_move = torch.multinomial(choose_from, num_samples=1)
 
-        agent_move = torch.argmax(distribution)
-        print(f"### {policy_name}'s Value Evaluation: {value}\n")
-
+        # Display Network Heads
+        alphazero_display(policy_name=policy_name,
+                          state=environment.state,
+                          tree_dist=distribution,
+                          tree_value=root_value,
+                          neural_dist=neural_distribution,
+                          neural_value=value,
+                          agent_move=agent_move,
+                          noise=noise)
 
         environment.action(column=int(agent_move.item()))
-        environment.player = -1
         graphic(environment.state)
-        print("\n")
+        print("")
         proceed = True
 
     else:
@@ -71,8 +80,8 @@ while (column != "end"):
     inrange = False
     
     while not proceed:
-        column = input(f"{emoji} Select any column from 1 to 7: ")
-        print(f"\n----------------------- ( Move {move} )")
+        column = input(f"{emoji} Select Column (1-7) : ")
+        print(f"\n+ ---------------------- ( Move {move} )")
         colNum = -1
         if column == "end":
             break
@@ -104,15 +113,17 @@ while (column != "end"):
         move += 1
 
         if winner(environment.state) == 1:
-            print("\n🔴🔴🔴🔴 Red Wins! 🔴🔴🔴🔴\n")
-            graphic(environment.state)
-            column = "end"
-        
-        if winner(environment.state) == -1:
-            print("🟡🟡🟡🟡 Yellow Wins! 🟡🟡🟡🟡\n")
-            column = "end"
+            player = compute_player(environment.state)
+            if player == 1:
+                print("🟡🟡🟡🟡 Yellow Wins! 🟡🟡🟡🟡\n")
+                graphic(environment.state)
+                column = "end"
+            else:
+                print("\n🔴🔴🔴🔴 Red Wins! 🔴🔴🔴🔴\n")
+                graphic(environment.state)
+                column = "end"
 
-        print("\n")
+        print("")
 
         if column == "end":
             break
@@ -120,32 +131,43 @@ while (column != "end"):
         else:
             graphic(environment.state)
         
-
-        distribution = tree_search.run(state=environment.state, player=agent_colour, display=False)
-        print(f"\n### {policy_name}'s TREE Decision Tensor: {distribution}\n")
-
-        state = torch.cat(((environment.state).reshape(42), torch.tensor([agent_colour])), dim=0)
-
-        output = policy_network(state)
+        tree_search = MCTS(model=policy_network, iterations=search_depth)
+        distribution = tree_search.run(state=environment.state, exploration_constant=exploration_constant, display=False)
+        
+        state = environment.state.reshape(42)
+        output = policy_network.forward(state)
         neural_distribution = output[:7]
         value = output[7]
+        root_node = tree_search.explored_nodes[0]
+        root_value = root_node.value_sum / root_node.visit_count
 
-        print(f"### {policy_name}'s NEURAL Decision Tensor: {neural_distribution}\n")
+        choose_from = softmax_temp(distribution, temp=noise)[0]
+        agent_move = torch.multinomial(choose_from, num_samples=1)
 
-        agent_move = torch.argmax(distribution)
-        print(f"### {policy_name}'s Value Evaluation: {value}\n")
+        # Display Network Heads
+        alphazero_display(policy_name=policy_name,
+                          state=environment.state,
+                          tree_dist=distribution,
+                          tree_value=root_value,
+                          neural_dist=neural_distribution,
+                          neural_value=value,
+                          agent_move=agent_move,
+                          noise=noise)
 
         environment.action(column=int(agent_move.item()))
-        environment.player = player_colour
         graphic(environment.state)
         print("\n")
 
         if winner(environment.state) == 1:
-            print("\n🔴🔴🔴🔴 Red Wins! 🔴🔴🔴🔴\n")
-            graphic(environment.state)
-            column = "end"
-        
-        if winner(environment.state) == -1:
-            print("🟡🟡🟡🟡 Yellow Wins! 🟡🟡🟡🟡\n")
-            column = "end"
+            player = compute_player(environment.state)
+            if player == 1:
+                print("🟡🟡🟡🟡 Yellow Wins! 🟡🟡🟡🟡\n")
+                graphic(environment.state)
+                column = "end"
+            else:
+                print("\n🔴🔴🔴🔴 Red Wins! 🔴🔴🔴🔴\n")
+                graphic(environment.state)
+                column = "end"
+
+
 
