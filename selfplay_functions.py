@@ -1,19 +1,22 @@
 import torch
-from neural_network import policy
-from connect_4 import mask, graphic, winner, Grid
+from neural_network import policy, Constant_Network
+from connect_4 import mask, graphic, winner, Grid, compute_player
 from tree_module import MCTS
-from functions import colour, generate_57
+from functions import colour, generate_57, softmax_temp
 from multiprocessing import Pool
 
+constant_model = Constant_Network()
 
-def selfplay(policy_network, initial_state, move_first):
+def selfplay(policy_network, initial_state, exploration_constant, noise):
     X = [] # Recorded States (Inputs)
     Y = [] # Recorded Distribution/Value Outputs
 
-    tree_test = MCTS(model=policy_network, iterations=200)
+    tree_test = MCTS(model=policy_network, iterations=250)
+    tree_constant = MCTS(model=constant_model, iterations=250)
 
     game_state = initial_state
-    player = move_first
+    initial_player = compute_player(initial_state)
+    player = compute_player(game_state)
     end_filter = torch.tensor([False, False, False, False, False, False, False])
     filter = torch.tensor([True, True, True, True, True, True, True])
     game_length = 0
@@ -23,28 +26,31 @@ def selfplay(policy_network, initial_state, move_first):
 
     while winner(game_state) == 0 and not torch.equal(filter, end_filter):
     
-        print(f"\n### {colour(player)}'s Move ###\n")
+        print(f"\n# {colour(player)}'s Move\n")
         graphic(game_state)
         print("\n")
-
+        
         mcts_distribution = tree_test.run(state=game_state,
-                                        
-                                        player=player,
-                                        display=False)
+                                          exploration_constant=exploration_constant,
+                                          display=False)
         
         # Data collection
-        x = torch.cat((game_state.reshape(42), torch.tensor([player])), dim=0)
+        x = game_state.reshape(42)
         recorded_states.append(x)
         y = mcts_distribution.reshape(7)
         recorded_mcts_dists.append(y)
-        
-        print(f"### {colour(player)}'s Decision Tensor: {mcts_distribution}\n")
 
-        print("---------------------------------------------------------------------------------------------")
-
-        chosen_move = torch.argmax(mcts_distribution, dim=1)
-        grid = Grid(state=game_state, player=player)
+        # Choose Move
+        choose_from = softmax_temp(mcts_distribution, temp=noise)[0]
+        chosen_move = torch.multinomial(choose_from, num_samples=1)
+        grid = Grid(state=game_state)
         grid.action(chosen_move)
+
+        print(f"# {colour(player)}'s Decision Tensor: {mcts_distribution}\n")
+        print(f"# 🌿 Tree w/ Temperature:")
+        print(softmax_temp(mcts_distribution, temp=noise))
+        print("")
+        print(f"# Chosen Move: {chosen_move}")
 
         # New state
         game_state = grid.state
@@ -55,21 +61,17 @@ def selfplay(policy_network, initial_state, move_first):
         filter = mask(game_state)
 
     if winner(game_state) == 0:
-        print(f"\n### Final Drawn Position ###\n")
         z = 0
 
     if winner(game_state) == 1:
-        print(f"\n### Final Position: Red Win ###\n")
-        z = 1
-
-    if winner(game_state) == -1:
-        print(f"\n### Final Position: Yellow Win ###\n")
-        z = -1
+        z = compute_player(game_state) * -1 # True Winner, +1 Red, -1 Yellow
 
     # Concatenate z values to distribution vectors - as to make vectors of length 8 from 7
     dist_value_outputs = []
+    z = z * initial_player # if starting player and result match, then reward the initial state... (+1)
     for y in recorded_mcts_dists:
         dist_value_outputs.append(torch.cat((y, torch.tensor([z])), dim=0))
+        z *= -1
 
     graphic(game_state)
     print("\n")
@@ -81,24 +83,24 @@ def selfplay(policy_network, initial_state, move_first):
     for dist_value_output in dist_value_outputs:
         Y.append(dist_value_output)
 
-
+    print(Y)
     return X, Y # Training Data
 
-# --- CPU Parallelisation --- #
+# CPU Parallelisation
 
 def worker(args):
-    policy_network, initial_state, move_first = args
-    X, Y = selfplay(policy_network=policy_network, initial_state=initial_state, move_first=move_first)
+    policy_network, initial_state, exploration_constant, noise = args
+    X, Y = selfplay(policy_network=policy_network, initial_state=initial_state, exploration_constant=exploration_constant, noise=noise)
     return X, Y
 
-def parallel_selfplay(policy_network):
+def parallel_selfplay(policy_network, exploration_constant, noise, cpu_cores):
     initial_states = generate_57()
     move_order = [1, -1, -1, -1, -1, -1 , -1, -1]
-    cpu_cores = 8
-    args_list = [(policy_network, state, to_move) for state, to_move in zip(initial_states[:8], move_order)]
+    cpu_cores = cpu_cores
+    args_list = [(policy_network, state, exploration_constant, noise) for state in initial_states[:cpu_cores]]
 
     with Pool(cpu_cores) as p:
-        dataset = p.map(worker, args_list) # Store 8 Game Results, as pairs (X_1, Y_1, ... X_1, Y_1)
+        dataset = p.map(worker, args_list) # Store 8 Game Results, as pairs (X_1, Y_1, ... X_8, Y_8)
 
     # Compute Dataset Size:
     dataset_size = 0
@@ -106,7 +108,7 @@ def parallel_selfplay(policy_network):
         dataset_size += len(X)
 
     # Compute X, Y Tensors:
-    X_total = torch.zeros(dataset_size, 43)
+    X_total = torch.zeros(dataset_size, 42)
     Y_total = torch.zeros(dataset_size, 8)
 
     index = 0
