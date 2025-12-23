@@ -1,34 +1,35 @@
 import torch
-from connect_4 import Grid, mask, winner, graphic
+from connect_4 import Grid, mask, winner, graphic, compute_player
 import math
 import numpy as np
 import copy
 
-exploration_constant = 1.2
+# Specified in AlphaZero Paper
+dirichlet = torch.distributions.Dirichlet(torch.full((7,), 1.))
+epsilon = 0.25
 
-def PUCT(parent, child, player):
-
+def PUCT(parent, child, exploration_constant):
+    # Compute Prior (Right of Equation)
     prior_score = child.prior * math.sqrt(parent.visit_count + 1) / (child.visit_count + 1)
-    # Note, we use parent.visit_count + 1 since the fact we're even computing this for a parent-child pair means parent was visited
+    prior_score *= exploration_constant
 
-    prior_score = player * prior_score # Flip as to incentivise yellow to explore NEGATIVE valuations for red
-    prior_score = exploration_constant * prior_score
-
+    # Compute Value (Left of Equation)
     if child.visit_count > 0:
         value_score = child.value()
     else:
         value_score = 0
 
-    return value_score + prior_score # Scalar, flipped if yellow perspective
+    return value_score + prior_score
 
-class Node:
+class Node: # Initialise on Discovery
+    # Player Computed from Parent State
     def __init__(self, prior, player, model):
         self.prior = prior # Parent's probability viewpoint of choosing child (scalar)
         self.player = player
         self.model = model
 
-        self.state = None # 6 x 7 tensor
-        self.nn_dist = None # 1 x 7 tensor
+        self.state = None # (6 x 7)
+        self.nn_dist = None # (1 x 7)
         self.value_sum = 0
         self.visit_count = 0
         self.parent = None # Stores single parent node
@@ -41,13 +42,7 @@ class Node:
          # expanding only necessary if we actually decide to explore this action
 
          self.state = state
-         state = state.reshape(42)
-         player = torch.tensor([self.player])
-         player = player.reshape(1)
-
-         x = torch.cat((state, player), dim=0)
-         x = x.float()
-
+         x = state.reshape(42).float()
          output_vector = self.model.forward(x)
          output_vector.detach()
 
@@ -68,6 +63,9 @@ class Node:
 
          return nn_value, nn_dist
 
+    def reset_root(self, state):
+         self.state = state.detach().clone()
+
     def expanded(self):
             if self.children == [None, None, None, None, None, None, None]:
                 return False
@@ -79,156 +77,139 @@ class Node:
              return 0
         return self.value_sum / (self.visit_count)
     
-    def best_child(self, player):
+    def best_child(self, exploration_constant):
         current_selection = None
         for child in self.children:
               if child is not None:
                 current_selection = child
                 break
         
-        for child in self.children: # Compare all children PUCT scores
+        for child in self.children: # Compare Childrens' PUCT Scores
             if child == None:
                 pass
-            elif player == 1:
-                if PUCT(self, child, player=self.player) > PUCT(self, current_selection, player=self.player):
-                    current_selection = child
-            elif player == -1:
-                if PUCT(self, child, player=self.player) < PUCT(self, current_selection, player=self.player):
-                    current_selection = child
+
+            # Maximise PUCT
+            elif PUCT(self, child, exploration_constant=exploration_constant) > PUCT(self, current_selection, exploration_constant=exploration_constant):
+                current_selection = child
 
         return current_selection
-    
-    def reset_root(self, state):
-         self.state = state.detach().clone()
 
 class MCTS:
-     def __init__(self, model, iterations):
-          self.model = model
-          self.iterations = iterations
-        
-          self.explored_nodes = [] # Maintain a list of all nodes
-        
-     def run(self, state, player, display):
-          total_wins = 0
-          red_wins = 0
-          yellow_wins = 0
+    def __init__(self, model, iterations):
+        self.model = model
+        self.iterations = iterations
 
-          root = Node(prior=None, player=player, model=self.model)
-          root.expand(state=state)
-          self.explored_nodes.append(root)
+        self.explored_nodes = [] # Maintain Node List
+        
+    def run(self, state, exploration_constant, display):
 
-          ### Stats for Testing ##########################################################################################################################
-                    
-          if display == True:
+        depth_values = torch.zeros(1, 100) # Stores Depths
+        total_wins = 0
+        red_wins = 0
+        yellow_wins = 0
+
+        player = compute_player(state) # State Encodes Info
+
+        root = Node(prior=None, player=player, model=self.model)
+        root.expand(state=state)
+        self.explored_nodes.append(root)
+
+        # Add Dirichlet Noise to Root
+        nablas = dirichlet.sample()
+        for index, child in enumerate(root.children):
+            try:
+                child.prior = (1 - epsilon) * child.prior + epsilon * nablas[index].item()
+            except:
+                pass
+        
+        # Main Search Loop
+        for iteration in range(self.iterations):
+            proceed = True
+            depth = 0
+            root.reset_root(state)
+            current_node = root
+            path = [current_node]
             
-            print(f"### Statistics for Root Node ###\n")
+            # Continuously Check Current Node, Traverse Branch
+            while current_node.expanded() == True:
+                    
+                snapshot = current_node.state
+                snap_player = current_node.player
+                current_node = current_node.best_child(exploration_constant=exploration_constant)
+
+                path.append(current_node)
+                depth += 1
+
+                if current_node.is_terminal == True: # Don't Expand Terminal States
+                    proceed = False
+                    break
+
+                self.explored_nodes.append(current_node)
+                player = player * -1
+
+            # Above Breaks if "current_node" (un)Expanded
+
+            # Select New Node ("current_node") and Expand
+            if proceed == True:
+                parent_node = current_node.parent
+                grid = Grid(state=parent_node.state)
+                
+                state_save = copy.deepcopy(parent_node.state) # Debugging Error
+                grid.action(column=current_node.parent_action) # New State for New Node
+                parent_node.state = state_save
+
+                nn_value, nn_dist = current_node.expand(state=grid.state) # Expand Node, Store Value to Backprop. up the Branch
+    
+                nn_value = nn_value.item() # Remove tensor coat
+                # Check if terminal
+                
+            if winner(current_node.state) != 0:
+                current_node.is_terminal = True
+                nn_value = 1 # Overwrite Signal. Fix to +1, Backprop will handle +/- 1
+    
+                colour = winner(current_node.state)
+                if colour == 1: # i.e. a win,
+                    red_wins += 1
+
+                else:
+                    yellow_wins += 1
+
+                total_wins += 1
+
+            # Backpropagate up the Branch
+            for history_node in path:
+                history_node.visit_count += 1
+                history_node.value_sum += (history_node.player * current_node.player) * nn_value
+
+        ### Stats for Testing --------------------------------------------------------------------+
+            
+            depth_values[0][depth] += 1 # Store Depth
+
+        if display == True:
+            print(f"\n🌿 Tree Search Statistics\n")
             for index, child in enumerate(root.children):
-                    print(f"""Column {index+1}.\n Visits: {f"{child.visit_count:.{5}f}"}, 
+                    print(f"""Column {index+1}.\nVisits: {f"{child.visit_count:.{5}f}"}, 
                         Average Value:     {f"{child.value():.{5}f}"},
                         Low Visit Boost:   {f"{exploration_constant * child.prior * math.sqrt(root.visit_count + 1) / (child.visit_count + 1):.{5}f}"},
-                        Final PUCT:        {f"{PUCT(root, child, player=player):.{5}f}"}""")
+                        Final PUCT:        {f"{PUCT(root, child, exploration_constant=exploration_constant):.{5}f}"},
+                        Best Child:        {(root.best_child(exploration_constant=exploration_constant)).parent_action + 1}""")           
 
+        # +---------------------------------------------------------------------------------------+
+        
+        # Return final counts
 
-          ################################################################################################################################################
-
-          for iteration in range(self.iterations):
-                proceed = True
-                # Expand Root
-                if display == True:
-                    print(f"\n ### Iteration {iteration} ###\n")
-                
-                depth = 0
-                root.reset_root(state)
-                current_node = root
-                path = [current_node]
-              
-                # Walk down path, storing its for later backprop
-                while current_node.expanded() == True:
-                        
-                    snapshot = current_node.state
-                    snap_player = current_node.player
-                    current_node = current_node.best_child(player=current_node.player)
-
-                    path.append(current_node)
-                    depth += 1
-
-                    if current_node.is_terminal == True: # So that expansion stage is ignored
-                        proceed = False
-                        break
-
-                    self.explored_nodes.append(current_node)
-                    player = player * -1
-
-                    if display == True:
-                        graphic(snapshot)
-                        print(f"\n ... with player {snap_player} to move\n")
-
-
-                # Select and Expand
-                if proceed == True:
-                    parent_node = current_node.parent
-                    grid = Grid(state=parent_node.state,
-                                player=parent_node.player)
-                
-                    
-                    state_save = copy.deepcopy(parent_node.state) # Debugging Error
-                    grid.action(column=current_node.parent_action) # Gives new state for unexpanded node
-                    parent_node.state = state_save
-                
+        mcts_distribution = torch.zeros(1, 7)
+        for child_index, child in enumerate(root.children):
+            if child != None:
+                mcts_distribution[0, child_index] = child.visit_count / self.iterations
+                # Normalise visit counts to yield new distribution
     
-                    nn_value, nn_dist = current_node.expand(state=grid.state) # Expand node, grab value to backprop
-        
-
-                    nn_value = nn_value.item() # Remove tensor coat
-                    # Check if terminal
-                    
-                if winner(current_node.state) != 0:
-                    current_node.is_terminal = True
-                    colour = winner(current_node.state)
-                    nn_value = 1 # Fix signal - backprop will handle which nodes are assigned +/- 1
-      
-                    if colour == 1: # i.e. a win,
-                            red_wins += 1
-                    else:
-                            yellow_wins += 1
-                    total_wins += 1
-
-                # Backprop
-                for node in path:
-                    node.visit_count += 1
-                    node.value_sum += -1 * current_node.player * nn_value # either direct NN value, or terminal reward
-                    # Notice current_node.player either +/- 1. This means that when node is from yellow's perspective, values are flipped
-
-          ### Stats for Testing ##########################################################################################################################
-                    
-                    if display == True:
-                        print(f"\n🌿🌿🌿 Leaf Node Selected at Depth = {depth} 🌿🌿🌿\n")
-                        graphic(current_node.state)
-                        print(f"\n ... with value {nn_value} and distribution {nn_dist}\n")
-                        print("# # # # # # # # # # # # # # # # # # #")
-                        print(f"\n### Statistics for Root Node ###\n")
-                        for index, child in enumerate(root.children):
-                             print(f"""Column {index+1}.\n Visits: {f"{child.visit_count:.{5}f}"}, 
-                                   Average Value:     {f"{child.value():.{5}f}"},
-                                   Low Visit Boost:   {f"{exploration_constant * child.prior * math.sqrt(root.visit_count + 1) / (child.visit_count + 1):.{5}f}"},
-                                   Final PUCT:        {f"{PUCT(root, child, player=1):.{5}f}"},
-                                   Best Child:        {(root.best_child(player=1)).parent_action + 1}""")           
-
-          ################################################################################################################################################
-          
-          # Return final counts
-
-          mcts_distribution = torch.zeros(1, 7)
-          for child_index, child in enumerate(root.children):
-               if child != None:
-                    mcts_distribution[0, child_index] = child.visit_count / self.iterations
-                    # Normalise visit counts to yield new distribution
-        
-          if display == True:
-            print(f"\n### Final Distribution ###\n")
+        if display == True:
+            print(f"\n# Final Distribution\n")
             print(mcts_distribution)
-            print(f"\n### Total Wins: {total_wins} / {self.iterations} ###\n")
+            print(f"\n# Total Wins: {total_wins} / {self.iterations}\n")
             print(f"... With Red Winning {red_wins}, vs Yellow Winning {yellow_wins}\n")
 
-          return mcts_distribution
-     
+        return mcts_distribution
+    
+
