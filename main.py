@@ -5,9 +5,8 @@ from tree_module import MCTS
 from functions import alphazero_display, softmax_temp
 
 torch.serialization.add_safe_globals([policy])
-policy_network = torch.load("trained_parameters.pt", weights_only=False)
-# policy_network = Constant_Network()
-policy_name = "trained_parameters.pt"
+policy_network = torch.load("awesome_parameters.pt", weights_only=False)
+policy_name = "awesome_parameters.pt"
 
 initial = torch.zeros(6,7)
 environment = Grid(state=initial)
@@ -15,7 +14,7 @@ environment = Grid(state=initial)
 column = ""
 move = 0
 exploration_constant = 1.85
-search_depth = 250
+search_depth = 1000
 noise = 0
 
 print("""\n# Connect 4. ("end" to exit) +\n""")
@@ -46,7 +45,7 @@ while not proceed:
         distribution = tree_search.run(state=environment.state, exploration_constant=exploration_constant, display=False)
 
         state = environment.state.reshape(42)
-        output = policy_network.forward(state)
+        output = policy_network(state)
         neural_distribution = output[:7]
         value = output[7]
         root_node = tree_search.explored_nodes[0]
@@ -134,8 +133,11 @@ while (column != "end"):
         tree_search = MCTS(model=policy_network, iterations=search_depth)
         distribution = tree_search.run(state=environment.state, exploration_constant=exploration_constant, display=False)
         
-        state = environment.state.reshape(42)
-        output = policy_network.forward(state)
+        flat_state = environment.state.reshape(42)
+        output = policy_network.forward(flat_state)
+        print(flat_state)
+        print("recomp??")
+        print(output)
         neural_distribution = output[:7]
         value = output[7]
         root_node = tree_search.explored_nodes[0]
@@ -168,6 +170,4 @@ while (column != "end"):
                 print("\n🔴🔴🔴🔴 Red Wins! 🔴🔴🔴🔴\n")
                 graphic(environment.state)
                 column = "end"
-
-
 
