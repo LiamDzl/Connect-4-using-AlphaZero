@@ -171,3 +171,5 @@ while (column != "end"):
                 graphic(environment.state)
                 column = "end"
 
+
+
