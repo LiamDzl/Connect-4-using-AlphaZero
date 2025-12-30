@@ -2,22 +2,26 @@ import torch
 from neural_network import policy, Constant_Network
 from connect_4 import Grid, winner, graphic, compute_player
 from tree_module import MCTS
-from functions import alphazero_display, softmax_temp
+from functions import alphazero_display, softmax_temp, expand_to_84
 
 torch.serialization.add_safe_globals([policy])
-policy_network = torch.load("awesome_parameters.pt", weights_only=False)
-policy_name = "awesome_parameters.pt"
+policy_network = torch.load("parameters.pt", weights_only=False)
+# policy_network = Constant_Network()
+policy_name = "parameters.pt"
+
 
 initial = torch.zeros(6,7)
+
 environment = Grid(state=initial)
 
 column = ""
 move = 0
-exploration_constant = 1.85
-search_depth = 1000
+exploration_constant = 3.5
+epsilon = 0
+search_depth = 250
 noise = 0
 
-print("""\n# Connect 4. ("end" to exit) +\n""")
+print("""\n// 🌀 AlphaZero Connect 4. ("end" to exit) +\n""")
 
 proceed = False
 while not proceed:
@@ -42,12 +46,17 @@ while not proceed:
         agent_colour = 1
    
         tree_search = MCTS(model=policy_network, iterations=search_depth)
-        distribution = tree_search.run(state=environment.state, exploration_constant=exploration_constant, display=False)
+        distribution = tree_search.run(state=environment.state,
+                                       exploration_constant=exploration_constant,
+                                       epsilon=epsilon,
+                                       display=True)
 
         state = environment.state.reshape(42)
-        output = policy_network(state)
+        output = policy_network.forward(expand_to_84(state))
+
         neural_distribution = output[:7]
         value = output[7]
+        
         root_node = tree_search.explored_nodes[0]
         root_value = root_node.value_sum / root_node.visit_count
 
@@ -70,7 +79,7 @@ while not proceed:
         proceed = True
 
     else:
-        print("❌ ERROR: invalid colour\n")
+        print("❌ Error: Invalid Colour\n")
 
 
 while (column != "end"):
@@ -80,14 +89,14 @@ while (column != "end"):
     
     while not proceed:
         column = input(f"{emoji} Select Column (1-7) : ")
-        print(f"\n+ ---------------------- ( Move {move} )")
+        print(f"\n+ --------------- ( Move {move} )")
         colNum = -1
         if column == "end":
             break
         try:
             colNum = int(column)
         except:
-            print("\n❌ ERROR: not in range\n")
+            print("\n❌ Error: Not in Range\n")
 
         if colNum >= 0:
             if colNum >= 1 and colNum <= 7:
@@ -96,11 +105,11 @@ while (column != "end"):
 
             if inrange == True:
                 if environment.state[0, int(column) - 1] != 0:
-                    print("\n❌ ERROR: column full!\n")
+                    print("\n❌ Error: Column Full!\n")
                     proceed = False
             
             else:
-                print("\n❌ ERROR: not in range\n") 
+                print("\n❌ Error: Not in Range\n") 
             
 
     if column == "end":
@@ -131,15 +140,17 @@ while (column != "end"):
             graphic(environment.state)
         
         tree_search = MCTS(model=policy_network, iterations=search_depth)
-        distribution = tree_search.run(state=environment.state, exploration_constant=exploration_constant, display=False)
+        distribution = tree_search.run(state=environment.state,
+                                       exploration_constant=exploration_constant,
+                                       epsilon=epsilon,
+                                       display=True)
         
-        flat_state = environment.state.reshape(42)
-        output = policy_network.forward(flat_state)
-        print(flat_state)
-        print("recomp??")
-        print(output)
+        state = environment.state.reshape(42)
+        output = policy_network.forward(expand_to_84(state))
+
         neural_distribution = output[:7]
         value = output[7]
+
         root_node = tree_search.explored_nodes[0]
         root_value = root_node.value_sum / root_node.visit_count
 
@@ -170,6 +181,9 @@ while (column != "end"):
                 print("\n🔴🔴🔴🔴 Red Wins! 🔴🔴🔴🔴\n")
                 graphic(environment.state)
                 column = "end"
+
+
+
 
 
 
