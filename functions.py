@@ -1,5 +1,5 @@
 import torch
-from connect_4 import Grid, graphic
+from connect_4 import Grid, graphic, compute_player
 import copy
 from rich import print as richprint
 from rich.panel import Panel
@@ -28,35 +28,35 @@ def colour(x):
     else:
         return "Yellow"
     
-def generate_57():
-    output  = []
-    output.append(torch.tensor([[0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0]]))
+def generate_400():
+    output = []
 
+    empty = torch.zeros((6, 7), dtype=torch.int)
+    output.append(empty)
+
+    # depth 1 (7 states)
+    depth1 = []
     for i in range(7):
-        grid = Grid(state=torch.tensor([[0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0],
-                               [0,0,0,0,0,0,0]]))
+        grid = Grid(state=copy.deepcopy(empty))
         grid.action(column=i)
+        depth1.append(grid.state)
         output.append(grid.state)
 
-    for i in range(7):
-
-        leaf = output[i+1] # one of the seven with one red move
-        
+    # depth 2 (49 states)
+    depth2 = []
+    for state in depth1:
         for j in range(7):
-            leaf = copy.deepcopy(leaf)
-            leaf_grid = Grid(state=leaf)
-            leaf_grid.action(column=j)
-            output.append(leaf_grid.state)
-            
+            grid = Grid(state=copy.deepcopy(state))
+            grid.action(column=j)
+            depth2.append(grid.state)
+            output.append(grid.state)
+
+    # depth 3 (343 states)
+    for state in depth2:
+        for k in range(7):
+            grid = Grid(state=copy.deepcopy(state))
+            grid.action(column=k)
+            output.append(grid.state)
 
     return output
 
@@ -97,10 +97,10 @@ def alphazero_display(policy_name, state, tree_dist, tree_value, neural_dist, ne
     print(f"<\dist\\neural>: {neural_dist}")
     print("")
 
-    if tree_value >= 0:
-        richprint(f"<\\value\\tree>: [bold green]{tree_value}")
+    if -tree_value >= 0:
+        richprint(f"<\\value\\tree>: [bold green]{-tree_value}")
     else:
-        richprint(f"<\\value\\tree>: [bold red]{tree_value}")
+        richprint(f"<\\value\\tree>: [bold red]{-tree_value}")
 
     if neural_value.item() >= 0:
         richprint(f"<\\value\\neural>: [bold green]{neural_value}")
@@ -117,8 +117,15 @@ def alphazero_display(policy_name, state, tree_dist, tree_value, neural_dist, ne
     print(f"# 🌿 Tree w/ Temperature:")
     print(softmax_temp(tree_dist, temp=noise))
     print("")
-    print(f"# Agent's Choice: {agent_move}")
+    print(f"# 🌀 Agent's Choice: {agent_move}")
     print("")
+
+
+def expand_to_84(x42):
+    first = (x42 == 1).float() # Player's Pieces
+    second = (x42 == -1).float() # Opponent's Pieces
+    return torch.cat([first, second], dim=0)
+
 
 
 
