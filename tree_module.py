@@ -3,10 +3,10 @@ from connect_4 import Grid, mask, winner, graphic, compute_player
 import math
 import numpy as np
 import copy
+from functions import expand_to_84
 
 # Specified in AlphaZero Paper
 dirichlet = torch.distributions.Dirichlet(torch.full((7,), 1.))
-epsilon = 0.25
 
 def PUCT(parent, child, exploration_constant):
     # Compute Prior (Right of Equation)
@@ -40,19 +40,17 @@ class Node: # Initialise on Discovery
     def expand(self, state):
          # Once node is created, all we have is scalar prior and whose turn it is...
          # expanding only necessary if we actually decide to explore this action
-
          self.state = state
          x = state.reshape(42).float()
+         x = expand_to_84(x)
          output_vector = self.model.forward(x)
          output_vector.detach()
-
          # Grab relevant infos
          nn_dist = output_vector[0:7]
          nn_value = output_vector[7] 
 
          # Now create set of "ghost nodes" for all non-zero probabilities -- 
          # these represent actions only, we've not computed any of these nodes out properly
-         
          for index, probability in enumerate(nn_dist):
             if probability != 0:
                 self.children[index] = Node(prior=probability, player=self.player * -1, model=self.model)
@@ -101,19 +99,16 @@ class MCTS:
 
         self.explored_nodes = [] # Maintain Node List
         
-    def run(self, state, exploration_constant, display):
+    def run(self, state, exploration_constant, epsilon, display):
 
         depth_values = torch.zeros(1, 100) # Stores Depths
         total_wins = 0
         red_wins = 0
         yellow_wins = 0
-
         player = compute_player(state) # State Encodes Info
-
         root = Node(prior=None, player=player, model=self.model)
         root.expand(state=state)
         self.explored_nodes.append(root)
-
         # Add Dirichlet Noise to Root
         nablas = dirichlet.sample()
         for index, child in enumerate(root.children):
@@ -136,7 +131,6 @@ class MCTS:
                 snapshot = current_node.state
                 snap_player = current_node.player
                 current_node = current_node.best_child(exploration_constant=exploration_constant)
-
                 path.append(current_node)
                 depth += 1
 
@@ -157,17 +151,18 @@ class MCTS:
                 state_save = copy.deepcopy(parent_node.state) # Debugging Error
                 grid.action(column=current_node.parent_action) # New State for New Node
                 parent_node.state = state_save
-
                 nn_value, nn_dist = current_node.expand(state=grid.state) # Expand Node, Store Value to Backprop. up the Branch
-    
-                nn_value = nn_value.item() # Remove tensor coat
-                # Check if terminal
-                
+                nn_value = nn_value.item()
+                nn_value *= -1 # Correct Perspectives
+
+            # Check if Terminal  
             if winner(current_node.state) != 0:
+                #graphic(current_node.state)
+                #print("")
                 current_node.is_terminal = True
                 nn_value = 1 # Overwrite Signal. Fix to +1, Backprop will handle +/- 1
     
-                colour = winner(current_node.state)
+                colour = -compute_player(current_node.state)
                 if colour == 1: # i.e. a win,
                     red_wins += 1
 
@@ -186,14 +181,25 @@ class MCTS:
             depth_values[0][depth] += 1 # Store Depth
 
         if display == True:
-            print(f"\n🌿 Tree Search Statistics\n")
+            print(f"\n🌿 Tree Search Statistics")
+            print("")
+            print("+------------------------------------------------------------------------------------------+")
             for index, child in enumerate(root.children):
-                    print(f"""Column {index+1}.\nVisits: {f"{child.visit_count:.{5}f}"}, 
-                        Average Value:     {f"{child.value():.{5}f}"},
-                        Low Visit Boost:   {f"{exploration_constant * child.prior * math.sqrt(root.visit_count + 1) / (child.visit_count + 1):.{5}f}"},
-                        Final PUCT:        {f"{PUCT(root, child, exploration_constant=exploration_constant):.{5}f}"},
-                        Best Child:        {(root.best_child(exploration_constant=exploration_constant)).parent_action + 1}""")           
-
+                if child is not None:
+                    print(f"| Column {index+1:<2} | "
+                    f"Visits: {child.visit_count:>4} | "
+                    f"Q Value: {child.value():>8.5f} | "
+                    f"U Value: {exploration_constant * child.prior * math.sqrt(root.visit_count + 1) / (child.visit_count + 1):>8.5f} | "
+                    f"Final PUCT: {PUCT(root, child, exploration_constant=exploration_constant):>9.6f} |")
+                    print("+------------------------------------------------------------------------------------------+")
+                else:
+                    print(f"|   Full!   | "
+                    f"Visits:    {0:<1} | "
+                    f"Q Value: {0:>8.5f} | "
+                    f"U Boost: {0:>8.5f} | "
+                    f"Final PUCT: {0:>9.6f} |")
+                    print("+------------------------------------------------------------------------------------------+")
+                    
         # +---------------------------------------------------------------------------------------+
         
         # Return final counts
@@ -208,8 +214,9 @@ class MCTS:
             print(f"\n# Final Distribution\n")
             print(mcts_distribution)
             print(f"\n# Total Wins: {total_wins} / {self.iterations}\n")
-            print(f"... With Red Winning {red_wins}, vs Yellow Winning {yellow_wins}\n")
+            print(f"... With 🔴 Winning {red_wins}, vs 🟡 Winning {yellow_wins}\n")
 
         return mcts_distribution
     
+
 
