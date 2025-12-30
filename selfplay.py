@@ -4,26 +4,31 @@ from selfplay_functions import parallel_selfplay
 from connect_4 import graphic
 import copy
 
-# Import Model, [42, 64, 64, 64, 8]
 torch.serialization.add_safe_globals([policy])
-policy_network = torch.load("1000itr lr=0.001 expc=1.85.pt", weights_only=False)
+policy_network = torch.load("parameters.pt", weights_only=False)
 
 cpu_cores = 8
-game_sets = 125
+game_sets = 1000
 
 # Hyperparameters
-exploration_constant = 1.35
-loss_value_constant = 1
-loss_dist_constant = 1
-epochs = 3
-nabla = 0.001
+mcts_depth = 250
+exploration_constant = 3.5
+epsilon = 0.25
+gamma = 0.96
+epochs = 10
+nabla = 0.0001
 noise = 0
 
 if __name__ == "__main__":
+    for game_set in range(game_sets):
 
-    for _ in range(game_sets):
-        X, Y = parallel_selfplay(policy_network=policy_network,
+        X, Y = parallel_selfplay(game_set=game_set,
+                                 game_sets=game_sets,
+                                 policy_network=policy_network,
+                                 mcts_depth=mcts_depth,
                                  exploration_constant=exploration_constant,
+                                 epsilon=epsilon,
+                                 gamma = gamma,
                                  cpu_cores=cpu_cores,
                                  noise=noise)
 
@@ -35,12 +40,25 @@ if __name__ == "__main__":
         Y_mirror = Y.clone()
 
         for index, state in enumerate(X_original):
-            shaped = state.reshape(6,7)
-            print(shaped)
-            shaped_mirror = torch.flip(shaped, dims=[1])
-            X_mirror[index] = shaped_mirror.reshape(42)
+            shaped_me = state[:42].reshape(6,7)
+            shaped_them = state[42:].reshape(6,7)
+            print(shaped_me)
             print("")
-            print(shaped_mirror)
+            print(shaped_them)
+            print("")
+            print(state)
+            print("")
+            shaped_mirror_me = torch.flip(shaped_me, dims=[1])
+            print(shaped_mirror_me)
+            print("")
+            first = shaped_mirror_me.reshape(42)
+            shaped_mirror_them = torch.flip(shaped_them, dims=[1])
+            print(shaped_mirror_them)
+            print("")
+            second = shaped_mirror_them.reshape(42)
+            mirror_state = torch.cat([first, second], dim=0)
+            X_mirror[index] = mirror_state
+            print(mirror_state)
             print("")
             y = Y_original[index]
             y_dist = y[:7]
@@ -53,12 +71,10 @@ if __name__ == "__main__":
 
         X_symm = torch.cat((X_original, X_mirror), dim=0)
         Y_symm = torch.cat((Y_original, Y_mirror), dim=0)
-
+  
         policy_network.train(training_inputs=X_symm,
                              training_outputs=Y_symm,
-                             loss_value_constant=loss_value_constant,
-                             loss_dist_constant=loss_dist_constant,
                              epochs=epochs,
                              nabla=nabla)
 
-        torch.save(policy_network, "1000itr lr=0.001 expc=1.85.pt")
+        torch.save(policy_network, "parameters.pt")
